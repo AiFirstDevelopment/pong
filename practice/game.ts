@@ -1,14 +1,41 @@
-// PONG -- build in this order, it compiles and runs after every block.
+// PONG. two ways to type this file, and it is arranged for both.
+//
+//   bottom-up -- parts 1, 2, 3, 4, 5, 6 in order. every part stands on its own
+//                and the game runs the moment part 6 lands. the safe order.
+//   top-down  -- part 1, then part 5 with everything it calls stubbed to an
+//                empty body, then fill in part 4, then 3, then 2. the shape of
+//                the game is on the screen first, and it runs at every step,
+//                doing less and less nothing as you go down.
+//
+// what makes both work: parts 2 to 5 are nothing but function declarations,
+// and those hoist, so they may be written in ANY order. only two things are
+// pinned. part 1 is data, and data runs top to bottom the moment the file
+// loads. part 6 is the four statements that start everything.
+//
 // the names follow two articles: sunshine2k's "vector reflection at a surface"
 // for the bounce, and learnopengl's breakout "collision detection" for the box.
+//
+// if the clock runs out, these are the things worth showing, in order:
+//   1 a canvas        part 1 handles, and a black fillAABB(COURT)
+//   2 paddle and ball part 1 sizes and state, aabb, fillAABB, draw
+//   3 it moves        vector, scale, translate, movedAABBBy, update, loop
+//   4 it bounces      unit vectors, reflect, pastWall, bounceOffWall
+//   5 you control it  clampToHalfExtent, closestPointOnAABB, onMouseMove
+//   6 it rallies      bounceOffPaddle
+//   7 it scores       resetBall, BALL_EXIT_LIMIT, score
+//   8 polish          onClick and running, beep, the hint text
 
-// --- 1. drawing handles ----------------------------------------------------
+// ===========================================================================
+// PART 1. THE WORLD -- data, so this part alone has to be in this order.
+// ===========================================================================
+
+// -- handles ----------------------------------------------------------------
 // the one <canvas> on the page
 const canvas = document.querySelector("canvas") as HTMLCanvasElement;
 // every mark this game makes goes through ctx
 const ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
 
-// --- 2. vectors and points -------------------------------------------------
+// -- types ------------------------------------------------------------------
 // one shape, five jobs. the alias never changes the math -- it says what a
 // given pair of numbers is FOR, so the rules below can be read out loud.
 type Vector = { x: number; y: number }; // the one shape: two named numbers
@@ -17,78 +44,148 @@ type HalfExtents = Vector; // how far an AABB reaches from its center, per axis
 type Velocity = Vector; // pixels per SECOND, never per frame
 type Direction = Vector; // which way; length 1. a surface normal is one of these
 
-// the only place a Vector is ever built, so there is one shape to trust
-const vector = (x: number, y: number): Vector => ({ x, y });
+// AABB is learnopengl's word: an axis-aligned bounding box, a rectangle that
+// never rotates. a position plus a reach, never corner + size -- that is what
+// keeps every rule below symmetric.
+type AABB = { center: Point; halfExtents: HalfExtents };
 
-// every one of these hands back a NEW vector, built by the maker above.
-// nothing in this file ever writes to an .x or a .y after the fact.
-// a + b: take a's step, then take b's as well
-const addVectors = (a: Vector, b: Vector): Vector =>
-  vector(a.x + b.x, a.y + b.y);
-// a - b: take a's step, then undo b's
-const subtractVectors = (a: Vector, b: Vector): Vector =>
-  vector(a.x - b.x, a.y - b.y);
-
-// one number, both axes -- longer or shorter, never turned.
-// a negative factor is the one exception: it flips the vector end for end.
-const scale = (v: Vector, factor: number): Vector =>
-  vector(v.x * factor, v.y * factor);
-
-// same length, other way. scale(v, -1) said in one word.
-const opposite = (v: Vector): Vector => vector(-v.x, -v.y);
-
-// drop the signs, one axis at a time. this is NOT the length of the vector.
-// it folds all four quadrants onto one, so a rule written for a single corner
-// covers the other three for free -- pastWall and bounceOffPaddle both lean on it.
-const absPerAxis = (v: Vector): Vector =>
-  vector(Math.abs(v.x), Math.abs(v.y));
-
-// signed: how far a goes in b's direction. negative = the other way.
-// both articles write this a ∙ b and call it the dot product.
-const dotProduct = (a: Vector, b: Vector): number => a.x * b.x + a.y * b.y;
-
-// the same math again, said in point words
-const point = (x: number, y: number): Point => vector(x, y);
-
-// a position plus a step is a new position. the only way anything moves here.
-const translate = (position: Point, step: Vector): Point =>
-  addVectors(position, step);
-// a position minus a position is the step between them. mind the flip: the answer
-// points FROM the first argument TO the second, so the words match the maths.
-const vectorFrom = (from: Point, to: Point): Vector =>
-  subtractVectors(to, from);
-
-// --- 3. unit vectors -------------------------------------------------------
+// -- unit vectors -----------------------------------------------------------
 // canvas y goes DOWN, so DOWN is the positive one.
 // these four double as the outward-facing surface normals of the four walls.
-// These are the core unit vectors
 const RIGHT: Direction = vector(1, 0); // +x, away from the player
 const DOWN: Direction = vector(0, 1); // +y, toward the bottom of the canvas
 const LEFT: Direction = opposite(RIGHT); // -x, toward the player's paddle
 const UP: Direction = opposite(DOWN); // -y, toward the top of the canvas
 
-// --- 4. an AABB: a center and half-extents ---------------------------------
-// AABB is learnopengl's word: an axis-aligned bounding box, a rectangle that
-// never rotates. a place plus a reach, never corner + size -- that is what
-// keeps every rule below symmetric.
-type AABB = { center: Point; halfExtents: HalfExtents };
+// -- sizes ------------------------------------------------------------------
+const PADDLE_CENTER_X = 36; // the paddle only moves up and down
+const PADDLE_HALF_EXTENTS: HalfExtents = vector(6, 45); // so 12 wide, 90 tall
+const BALL_HALF_EXTENTS: HalfExtents = vector(6, 6); // a 12 x 12 square
+
+// pixels per SECOND, not per frame -- same game on a 60 Hz and a 120 Hz screen
+const BALL_SPEED: Velocity = vector(270, 180);
+
+// a backgrounded tab hands back one huge gap. cap it, or the ball teleports.
+const MAX_FRAME_SECONDS = 0.05; // 50 ms; slow motion beats a tunnelled ball
+
+// -- the court and its limits -----------------------------------------------
+// the court fills the canvas, so its center and its half-extents come out as
+// the same two numbers. that is a coincidence of starting at (0, 0), not a rule.
+const COURT = aabb(
+  point(canvas.width / 2, canvas.height / 2), // the middle of the canvas
+  vector(canvas.width / 2, canvas.height / 2), // half its width and height
+);
+
+// fold a moving box's own size into the court and only a POSITION is left to
+// chase -- every test below is then point-vs-AABB, never AABB-vs-AABB.
+const BALL_CENTER_LIMIT = courtShrunkBy(BALL_HALF_EXTENTS); // walls bounce here
+const BALL_EXIT_LIMIT = courtGrownBy(BALL_HALF_EXTENTS); // fully gone past here
+const PADDLE_CENTER_LIMIT = courtShrunkBy(PADDLE_HALF_EXTENTS); // mouse capped here
+
+// -- state ------------------------------------------------------------------
+// everything that changes from frame to frame lives here, and nowhere else.
+let paddle = aabb(point(PADDLE_CENTER_X, COURT.center.y), PADDLE_HALF_EXTENTS);
+let ball = aabb(point(0, 0), BALL_HALF_EXTENTS); // resetBall() fills this in
+let ballVelocity: Velocity = vector(0, 0); // resetBall() fills this in too
+let score = 0; // returns in a row; one miss puts it back to zero
+let lastTime = 0; // previous frame's timestamp; 0 means there wasn't one
+let running = false; // the ball waits until the player clicks
+let audio: AudioContext | null = null; // null right up until that first click
+
+// ===========================================================================
+// PART 2. PRIMITIVES -- vectors, positions and boxes. no game in here at all.
+// ===========================================================================
+
+// the only place a Vector is ever built, so there is one shape to trust
+function vector(x: number, y: number): Vector {
+  return { x, y };
+}
+
+// every one of these hands back a NEW vector, built by the maker above.
+// nothing in this file ever writes to an .x or a .y after the fact.
+
+// a + b: take a's step, then take b's as well
+function addVectors(a: Vector, b: Vector): Vector {
+  return vector(a.x + b.x, a.y + b.y);
+}
+
+// a - b: take a's step, then undo b's
+function subtractVectors(a: Vector, b: Vector): Vector {
+  return vector(a.x - b.x, a.y - b.y);
+}
+
+// one number, both axes -- longer or shorter, never turned.
+// a negative factor is the one exception: it flips the vector end for end.
+function scale(v: Vector, factor: number): Vector {
+  return vector(v.x * factor, v.y * factor);
+}
+
+// same length, other way. scale(v, -1) said in one word.
+function opposite(v: Vector): Vector {
+  return vector(-v.x, -v.y);
+}
+
+// drop the signs, one axis at a time. this is NOT the length of the vector.
+// it folds all four quadrants onto one, so a rule written for a single corner
+// covers the other three for free -- pastWall and bounceOffPaddle both use it.
+function absPerAxis(v: Vector): Vector {
+  return vector(Math.abs(v.x), Math.abs(v.y));
+}
+
+// signed: how far a goes in b's direction. negative = the other way.
+// both articles write this a ∙ b and call it the dot product.
+function dotProduct(a: Vector, b: Vector): number {
+  return a.x * b.x + a.y * b.y;
+}
+
+// the same math again, said in position words
+function point(x: number, y: number): Point {
+  return vector(x, y);
+}
+
+// a position plus a step is a new position. the only way anything moves here.
+function translate(position: Point, step: Vector): Point {
+  return addVectors(position, step);
+}
+
+// a position minus a position is the step between them. mind the flip: the
+// answer points FROM the first argument TO the second, so the words match.
+function vectorFrom(from: Point, to: Point): Vector {
+  return subtractVectors(to, from);
+}
 
 // the only place an AABB is built
-const aabb = (center: Point, halfExtents: HalfExtents): AABB => ({
-  center,
-  halfExtents,
-});
+function aabb(center: Point, halfExtents: HalfExtents): AABB {
+  return { center, halfExtents };
+}
 
 // AABBs only move, never resize. past tense: they hand back a moved AABB and
 // leave the one they were given alone, which is what the argument is named for.
-// drop it at a new center, keeping the reach it already had
-const movedAABBTo = (original: AABB, center: Point): AABB =>
-  aabb(center, original.halfExtents);
-// nudge it by a step: work out where that lands, then use the mover above
-const movedAABBBy = (original: AABB, step: Vector): AABB =>
-  movedAABBTo(original, translate(original.center, step));
 
-// --- 5. the three formulas -------------------------------------------------
+// drop it at a new center, keeping the reach it already had
+function movedAABBTo(original: AABB, center: Point): AABB {
+  return aabb(center, original.halfExtents);
+}
+
+// nudge it by a step: work out where that lands, then use the mover above
+function movedAABBBy(original: AABB, step: Vector): AABB {
+  return movedAABBTo(original, translate(original.center, step));
+}
+
+// shrink -> where a box's center may sit with the whole box still on court
+function courtShrunkBy(halfExtents: HalfExtents): AABB {
+  return aabb(COURT.center, subtractVectors(COURT.halfExtents, halfExtents));
+}
+
+// grow -> past there, not one pixel of that box is still showing
+function courtGrownBy(halfExtents: HalfExtents): AABB {
+  return aabb(COURT.center, addVectors(COURT.halfExtents, halfExtents));
+}
+
+// ===========================================================================
+// PART 3. THE FORMULAS -- pure maths. nothing in here reads or writes state.
+// ===========================================================================
+
 // BOUNCE. sunshine2k's reflection formula, letter for letter:
 //   w = v - 2 * (v ∙ n) * n,  where |n| = 1
 // n MUST have length 1, or the doubled term comes out the wrong size and the
@@ -122,8 +219,8 @@ function clampToHalfExtent(value: number, halfExtent: number): number {
   return whichWay * size;
 }
 
-// the closest point on the AABB, or the point itself if it was already inside.
-// these are learnopengl's three steps: difference -> clamped -> closest.
+// the closest point on the AABB, or the position itself if it was already
+// inside. these are learnopengl's three steps: difference -> clamped -> closest.
 // clamping per axis works because an AABB is one interval per axis. a circle
 // is not, so the same shortcut does not carry over to one.
 function closestPointOnAABB(position: Point, target: AABB): Point {
@@ -132,7 +229,7 @@ function closestPointOnAABB(position: Point, target: AABB): Point {
 
   // clamped: that same offset, cut back to the box's reach on each axis. an
   // axis already within reach passes through untouched, which is exactly why
-  // a point that started inside comes back out unchanged.
+  // a position that started inside comes back out unchanged.
   const clamped = vector(
     clampToHalfExtent(difference.x, target.halfExtents.x),
     clampToHalfExtent(difference.y, target.halfExtents.y),
@@ -143,78 +240,6 @@ function closestPointOnAABB(position: Point, target: AABB): Point {
   return translate(target.center, clamped);
 }
 
-// --- 6. sizes and the court ------------------------------------------------
-const PADDLE_CENTER_X = 36; // the paddle only moves up and down
-const PADDLE_HALF_EXTENTS: HalfExtents = vector(6, 45); // so 12 wide, 90 tall
-const BALL_HALF_EXTENTS: HalfExtents = vector(6, 6); // a 12 x 12 square
-
-// pixels per SECOND, not per frame -- same game on a 60 Hz and a 120 Hz screen
-const BALL_SPEED: Velocity = vector(270, 180);
-
-// the court fills the canvas, so its center and its half-extents come out as
-// the same two numbers. that is a coincidence of starting at (0, 0), not a rule.
-const COURT = aabb(
-  point(canvas.width / 2, canvas.height / 2), // the middle of the canvas
-  vector(canvas.width / 2, canvas.height / 2), // half its width and height
-);
-
-// fold a moving box's own size into the court and only a POINT is left to
-// chase -- every test below is then point-vs-AABB, never AABB-vs-AABB.
-// shrink -> where its center may sit with the whole box still on court
-const courtShrunkBy = (halfExtents: HalfExtents): AABB =>
-  aabb(COURT.center, subtractVectors(COURT.halfExtents, halfExtents));
-// grow -> past there, not one pixel of the box is still showing
-const courtGrownBy = (halfExtents: HalfExtents): AABB =>
-  aabb(COURT.center, addVectors(COURT.halfExtents, halfExtents));
-
-const BALL_CENTER_LIMIT = courtShrunkBy(BALL_HALF_EXTENTS); // the walls bounce here
-const BALL_EXIT_LIMIT = courtGrownBy(BALL_HALF_EXTENTS); // fully gone past here
-const PADDLE_CENTER_LIMIT = courtShrunkBy(PADDLE_HALF_EXTENTS); // the mouse is capped here
-
-// --- 7. state --------------------------------------------------------------
-// everything that changes from frame to frame lives here, and nowhere else.
-let paddle = aabb(point(PADDLE_CENTER_X, COURT.center.y), PADDLE_HALF_EXTENTS);
-let ball = aabb(point(0, 0), BALL_HALF_EXTENTS); // resetBall() fills this in
-let ballVelocity: Velocity = vector(0, 0); // resetBall() fills this in too
-let score = 0; // returns in a row; one miss puts it back to zero
-let lastTime = 0; // previous frame's timestamp; 0 means there wasn't one
-let running = false; // the ball waits until the player clicks
-
-// --- 8. serve --------------------------------------------------------------
-function resetBall() {
-  // the far right edge: the last spot where all of the ball is still on court
-  const serveDistance = BALL_CENTER_LIMIT.halfExtents.x;
-  // step that far in the RIGHT direction, starting from the middle of the court
-  const servePoint = translate(COURT.center, scale(RIGHT, serveDistance));
-
-  ball = movedAABBTo(ball, servePoint); // park it there, same size as before
-  ballVelocity = vector(-BALL_SPEED.x, BALL_SPEED.y); // leftward, at the player
-}
-
-// --- 9. mouse --------------------------------------------------------------
-// listen on WINDOW, not canvas -- on canvas the paddle freezes when you leave it.
-window.addEventListener("mousemove", (event) => {
-  // clientY is from the top of the WINDOW, so subtract where the canvas starts
-  const canvasTop = canvas.getBoundingClientRect().top;
-  // mouseY is now in canvas coordinates, the same ones every AABB here uses
-  const mouseY = event.clientY - canvasTop;
-
-  // x is fixed; the mouse only ever picks the height. update() clamps this to
-  // PADDLE_CENTER_LIMIT, so an off-court mouse is harmless right here.
-  paddle = movedAABBTo(paddle, point(PADDLE_CENTER_X, mouseY));
-});
-
-// --- 10. click to start ----------------------------------------------------
-// no audio before a real interaction, and mousemove does not count -- so the
-// click that starts play is also the click that builds the AudioContext.
-let audio: AudioContext | null = null; // null right up until that first click
-
-window.addEventListener("click", () => {
-  if (!audio) audio = new AudioContext(); // build it once, never again
-  running = true; // from here on, update() moves the ball
-});
-
-// --- 11. collisions --------------------------------------------------------
 // how far a position sits past one wall of an AABB. negative means still inside.
 function pastWall(position: Point, limit: AABB, normal: Direction): number {
   // the offset from the box's center out to the position
@@ -229,6 +254,20 @@ function pastWall(position: Point, limit: AABB, normal: Direction): number {
 
   // positive: that far past the wall. negative: that much room still to spare.
   return positionIsOut - wallIsOut;
+}
+
+// ===========================================================================
+// PART 4. THE RULES -- what a serve and a collision actually do to the state.
+// ===========================================================================
+
+function resetBall() {
+  // the far right edge: the last position where all of the ball is on court
+  const serveDistance = BALL_CENTER_LIMIT.halfExtents.x;
+  // step that far in the RIGHT direction, starting from the middle of the court
+  const servePosition = translate(COURT.center, scale(RIGHT, serveDistance));
+
+  ball = movedAABBTo(ball, servePosition); // park it there, same size as before
+  ballVelocity = vector(-BALL_SPEED.x, BALL_SPEED.y); // leftward, at the player
 }
 
 function bounceOffWall(normal: Direction) {
@@ -284,7 +323,26 @@ function bounceOffPaddle() {
   if (headedBackUpCourt) score++;
 }
 
-// --- 12. the rules ---------------------------------------------------------
+// ===========================================================================
+// PART 5. THE STORY -- input, one frame of the game, and the loop.
+// ===========================================================================
+
+function onMouseMove(event: MouseEvent) {
+  // clientY is from the top of the WINDOW, so subtract where the canvas starts
+  const canvasTop = canvas.getBoundingClientRect().top;
+  // mouseY is now in canvas coordinates, the same ones every AABB here uses
+  const mouseY = event.clientY - canvasTop;
+
+  // x is fixed; the mouse only ever picks the height. update() clamps this to
+  // PADDLE_CENTER_LIMIT, so an off-court mouse is harmless right here.
+  paddle = movedAABBTo(paddle, point(PADDLE_CENTER_X, mouseY));
+}
+
+function onClick() {
+  if (!audio) audio = new AudioContext(); // build it once, never again
+  running = true; // from here on, update() moves the ball
+}
+
 function update(elapsed: number) {
   // the mouse asks for a center; this hands back the nearest one allowed
   const allowedCenter = closestPointOnAABB(paddle.center, PADDLE_CENTER_LIMIT);
@@ -310,7 +368,6 @@ function update(elapsed: number) {
   }
 }
 
-// --- 13. output: draw and beep ---------------------------------------------
 // the one place that converts back to corner + full size, for the canvas
 function fillAABB(target: AABB) {
   // fillRect wants the top-left corner: step back from the center by the reach
@@ -358,10 +415,6 @@ function beep() {
   tone.stop(now + 0.08); // one-shot: a stopped oscillator can never restart
 }
 
-// --- 14. the loop ----------------------------------------------------------
-// a backgrounded tab hands back one huge gap. cap it, or the ball teleports.
-const MAX_FRAME_SECONDS = 0.05; // 50 ms; brief slow motion beats a tunnelled ball
-
 function loop(now: number) {
   if (lastTime === 0) lastTime = now; // start the clock on frame 1, not on load
 
@@ -374,5 +427,16 @@ function loop(now: number) {
   requestAnimationFrame(loop); // and book the next frame
 }
 
-resetBall(); // put the ball on its serve spot before the very first draw
+// ===========================================================================
+// PART 6. GO -- the only statements outside a function. these have to be last.
+// ===========================================================================
+
+// listen on WINDOW, not the canvas -- on the canvas the paddle freezes the
+// moment the pointer leaves it.
+window.addEventListener("mousemove", onMouseMove);
+// no audio before a real interaction, and mousemove does not count -- so the
+// click that starts play is also the click that builds the AudioContext.
+window.addEventListener("click", onClick);
+
+resetBall(); // put the ball on its serve position before the very first draw
 requestAnimationFrame(loop); // start the clock; the click starts the ball
