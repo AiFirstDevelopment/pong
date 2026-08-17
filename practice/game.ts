@@ -36,8 +36,8 @@ function draw() {
 
   // steps 2 and 3 -- the two boxes
   ctx.fillStyle = "white";
-  fillAABB(ball);
-  fillAABB(paddle);
+  fillBox(ball);
+  fillBox(paddle);
 
   // step 9 -- the score. fillText reuses the fillStyle set just above.
   ctx.font = "20px monospace";
@@ -77,12 +77,12 @@ requestAnimationFrame(loop);
 // given pair of numbers is FOR. the last two arrive at steps 4 and 5.
 type Vector = { x: number; y: number }; // the one shape: two named numbers
 type Point = Vector; // a position on the court
-type HalfExtents = Vector; // how far an AABB reaches from its center, per axis
+type HalfExtents = Vector; // how far a box reaches from its center, per axis
 
-// AABB is learnopengl's word: an axis-aligned bounding box, a rectangle that
-// never rotates. a position plus a reach, never corner + size -- that is what
-// keeps every collision rule below symmetric.
-type AABB = { center: Point; halfExtents: HalfExtents };
+// a box here is an AABB, learnopengl's word for an axis-aligned bounding box:
+// a rectangle that never rotates. a position plus a reach, never corner + size
+// -- that is what keeps every collision rule below symmetric.
+type Box = { center: Point; halfExtents: HalfExtents };
 
 // the only place a Vector is ever built, so there is one shape to trust
 function vector(x: number, y: number): Vector {
@@ -110,13 +110,13 @@ function opposite(v: Vector): Vector {
   return vector(-v.x, -v.y);
 }
 
-// the only place an AABB is built
-function aabb(center: Point, halfExtents: HalfExtents): AABB {
+// the only place a box is built
+function box(center: Point, halfExtents: HalfExtents): Box {
   return { center, halfExtents };
 }
 
 // the one place that converts back to corner + full size, for the canvas
-function fillAABB(target: AABB) {
+function fillBox(target: Box) {
   // fillRect wants the top-left corner: step back from the center by the reach
   const corner = translate(target.center, opposite(target.halfExtents));
   const width = 2 * target.halfExtents.x; // it reaches both ways, so double it
@@ -127,7 +127,7 @@ function fillAABB(target: AABB) {
 
 // the court fills the canvas, so its center and its half-extents come out as
 // the same two numbers. that is a coincidence of starting at (0, 0), not a rule.
-const COURT = aabb(
+const COURT = box(
   point(canvas.width / 2, canvas.height / 2), // the middle of the canvas
   vector(canvas.width / 2, canvas.height / 2), // half its width and height
 );
@@ -135,16 +135,16 @@ const COURT = aabb(
 const BALL_HALF_EXTENTS: HalfExtents = vector(6, 6); // a 12 x 12 square
 
 // mid-court, so it is visible now. resetBall() takes over at step 8.
-let ball = aabb(COURT.center, BALL_HALF_EXTENTS);
+let ball = box(COURT.center, BALL_HALF_EXTENTS);
 
 // ===========================================================================
-// STEP 3. THE PADDLE. three lines -- fillAABB already does the work.
+// STEP 3. THE PADDLE. three lines -- fillBox already does the work.
 // ===========================================================================
 
 const PADDLE_CENTER_X = 36; // the paddle only ever moves up and down
 const PADDLE_HALF_EXTENTS: HalfExtents = vector(6, 45); // so 12 wide, 90 tall
 
-let paddle = aabb(point(PADDLE_CENTER_X, COURT.center.y), PADDLE_HALF_EXTENTS);
+let paddle = box(point(PADDLE_CENTER_X, COURT.center.y), PADDLE_HALF_EXTENTS);
 
 // ===========================================================================
 // STEP 4. IT MOVES, AND LEAVES OFF THE FIRST WALL. the loop is already
@@ -159,17 +159,17 @@ function scale(v: Vector, factor: number): Vector {
   return vector(v.x * factor, v.y * factor);
 }
 
-// AABBs only move, never resize. past tense: they hand back a moved AABB and
+// boxes only move, never resize. past tense: they hand back a moved box and
 // leave the one they were given alone, which is what the argument is named for.
 
 // drop it at a new center, keeping the reach it already had
-function movedAABBTo(original: AABB, center: Point): AABB {
-  return aabb(center, original.halfExtents);
+function movedBoxTo(original: Box, center: Point): Box {
+  return box(center, original.halfExtents);
 }
 
 // nudge it by a step: work out where that lands, then use the mover above
-function movedAABBBy(original: AABB, step: Vector): AABB {
-  return movedAABBTo(original, translate(original.center, step));
+function movedBoxBy(original: Box, step: Vector): Box {
+  return movedBoxTo(original, translate(original.center, step));
 }
 
 // pixels per SECOND, not per frame -- same game on a 60 Hz and a 120 Hz screen
@@ -184,15 +184,15 @@ const MAX_FRAME_SECONDS = 0.05; // 50 ms; slow motion beats a tunnelled ball
 // GROWS. one group per step, and the groups run in this order every frame.
 function update(elapsed: number) {
   // step 7 -- the mouse asks for a center; this hands back the nearest allowed
-  const allowedCenter = closestPointOnAABB(paddle.center, PADDLE_CENTER_LIMIT);
-  paddle = movedAABBTo(paddle, allowedCenter); // no part of it leaves the court
+  const allowedCenter = closestPointOnBox(paddle.center, PADDLE_CENTER_LIMIT);
+  paddle = movedBoxTo(paddle, allowedCenter); // no part of it leaves the court
 
   // step 10 -- the ball waits for the first click. the paddle does not.
   if (!running) return;
 
   // step 4 -- Velocity -> Vector: px/s * s = px. the only use of elapsed.
   const step = scale(ballVelocity, elapsed);
-  ball = movedAABBBy(ball, step); // move first, then undo any overlap below
+  ball = movedBoxBy(ball, step); // move first, then undo any overlap below
 
   // step 5 -- three walls. the player's end has a paddle instead.
   bounceOffWall(DOWN);
@@ -248,10 +248,10 @@ const LEFT: Direction = opposite(RIGHT); // -x, toward the player's paddle
 const UP: Direction = opposite(DOWN); // -y, toward the top of the canvas
 
 // fold a moving box's own size into the court and only a POSITION is left to
-// chase -- every test below is then point-vs-AABB, never AABB-vs-AABB.
+// chase -- every test below is then point-vs-box, never box-vs-box.
 // shrink -> where a box's center may sit with the whole box still on court
-function courtShrunkBy(halfExtents: HalfExtents): AABB {
-  return aabb(COURT.center, subtractVectors(COURT.halfExtents, halfExtents));
+function courtShrunkBy(halfExtents: HalfExtents): Box {
+  return box(COURT.center, subtractVectors(COURT.halfExtents, halfExtents));
 }
 
 const BALL_CENTER_LIMIT = courtShrunkBy(BALL_HALF_EXTENTS); // walls bounce here
@@ -275,8 +275,8 @@ function reflect(v: Velocity, n: Direction): Velocity {
   return subtractVectors(v, twicePerpendicular);
 }
 
-// how far a position sits past one wall of an AABB. negative means still inside.
-function pastWall(position: Point, limit: AABB, normal: Direction): number {
+// how far a position sits past one wall of a box. negative means still inside.
+function pastWall(position: Point, limit: Box, normal: Direction): number {
   // the offset from the box's center out to the position
   const fromCenter = vectorFrom(limit.center, position);
   // how far out THAT WAY the position is. the dot product picks out the one
@@ -300,7 +300,7 @@ function bounceOffWall(normal: Direction) {
   // the wall re-triggers next frame, flipping its velocity over and over.
   const backOntoTheWall = scale(normal, -overshoot);
 
-  ball = movedAABBBy(ball, backOntoTheWall); // sit it exactly on the wall...
+  ball = movedBoxBy(ball, backOntoTheWall); // sit it exactly on the wall...
   ballVelocity = reflect(ballVelocity, normal); // ...then send it back out
 }
 
@@ -313,7 +313,7 @@ function bounceOffWall(normal: Direction) {
 
 // GROWS. the last two groups arrive at steps 9 and 10.
 function bounceOffPaddle() {
-  // two AABBs collide when the gap between their centers is shorter than their
+  // two boxes collide when the gap between their centers is shorter than their
   // combined reach, on BOTH axes. what is left over on each axis is how deep
   // one of them got into the other.
   const gap = vectorFrom(paddle.center, ball.center); // paddle -> ball
@@ -343,7 +343,7 @@ function bounceOffPaddle() {
   // except here the ball is inside the box rather than past it.
   const backOutOfThePaddle = scale(normal, overlap);
 
-  ball = movedAABBBy(ball, backOutOfThePaddle); // clear of the paddle first...
+  ball = movedBoxBy(ball, backOutOfThePaddle); // clear of the paddle first...
   ballVelocity = reflect(ballVelocity, normal); // ...then bounce
 
   beep(); // step 10 -- and say so out loud
@@ -374,11 +374,11 @@ function clampToHalfExtent(value: number, halfExtent: number): number {
   return whichWay * size;
 }
 
-// the closest point on the AABB, or the position itself if it was already
+// the closest point on the box, or the position itself if it was already
 // inside. these are learnopengl's three steps: difference -> clamped -> closest.
 // clamping per axis works because an AABB is one interval per axis. a circle
 // is not, so the same shortcut does not carry over to one.
-function closestPointOnAABB(position: Point, target: AABB): Point {
+function closestPointOnBox(position: Point, target: Box): Point {
   // difference: the offset from the box's center out to the position
   const difference = vectorFrom(target.center, position);
 
@@ -398,12 +398,12 @@ function closestPointOnAABB(position: Point, target: AABB): Point {
 function onMouseMove(event: MouseEvent) {
   // clientY is from the top of the WINDOW, so subtract where the canvas starts
   const canvasTop = canvas.getBoundingClientRect().top;
-  // mouseY is now in canvas coordinates, the same ones every AABB here uses
+  // mouseY is now in canvas coordinates, the same ones every box here uses
   const mouseY = event.clientY - canvasTop;
 
   // x is fixed; the mouse only ever picks the height. update() clamps this to
   // PADDLE_CENTER_LIMIT, so an off-court mouse is harmless right here.
-  paddle = movedAABBTo(paddle, point(PADDLE_CENTER_X, mouseY));
+  paddle = movedBoxTo(paddle, point(PADDLE_CENTER_X, mouseY));
 }
 
 // listen on WINDOW, not the canvas -- on the canvas the paddle freezes the
@@ -415,8 +415,8 @@ window.addEventListener("mousemove", onMouseMove);
 // ===========================================================================
 
 // grow -> past there, not one pixel of that box is still showing
-function courtGrownBy(halfExtents: HalfExtents): AABB {
-  return aabb(COURT.center, addVectors(COURT.halfExtents, halfExtents));
+function courtGrownBy(halfExtents: HalfExtents): Box {
+  return box(COURT.center, addVectors(COURT.halfExtents, halfExtents));
 }
 
 const BALL_EXIT_LIMIT = courtGrownBy(BALL_HALF_EXTENTS); // fully gone past here
@@ -427,7 +427,7 @@ function resetBall() {
   // step that far in the RIGHT direction, starting from the middle of the court
   const servePosition = translate(COURT.center, scale(RIGHT, serveDistance));
 
-  ball = movedAABBTo(ball, servePosition); // park it there, same size as before
+  ball = movedBoxTo(ball, servePosition); // park it there, same size as before
   ballVelocity = vector(-BALL_SPEED.x, BALL_SPEED.y); // leftward, at the player
 }
 
