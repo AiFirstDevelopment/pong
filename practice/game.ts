@@ -247,30 +247,17 @@ function onMouseMove(event: MouseEvent) {
 window.addEventListener("mousemove", onMouseMove);
 
 // ===========================================================================
-// THE SCORE, THE FIRST CLICK, AND THE BEEP.
+// THE SCORE, AND THE FIRST CLICK.
 // ===========================================================================
 
 let score = 0; // returns in a row; one miss puts it back to zero
 
 let running = false; // the ball waits until the player clicks
-let audio: AudioContext; // the first click builds it; beep() cannot run before
 
 function onClick() {
-  audio ??= new AudioContext(); // build it once, never again
   running = true; // from here on, update() moves the ball
 }
 
-// four statements: make it, connect it, start it, stop it. 440 Hz sine is the
-// default, so there is nothing to set. no gain node in front of it, which is
-// what makes it two lines -- and also full volume, and a tick at the cut-off
-// where a fade would have been.
-function beep() {
-  const tone = audio.createOscillator(); tone.connect(audio.destination);
-  tone.start(); tone.stop(audio.currentTime + 0.06);
-}
-
-// no audio before a real interaction, and mousemove does not count -- so the
-// click that starts play is also the click that builds the AudioContext.
 window.addEventListener("click", onClick);
 
 // ===========================================================================
@@ -342,8 +329,6 @@ function bounceOffPaddle() {
 
   ball = movedBoxBy(ball, backOutOfThePaddle); // clear of the paddle first...
   ballVelocity = reflect(ballVelocity, normal); // ...then bounce
-
-  beep(); // and say so out loud
 
   // only a RETURN scores. clipping the top edge leaves it going left.
   const headedBackUpCourt = dotProduct(ballVelocity, RIGHT) > 0;
