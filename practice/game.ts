@@ -1,13 +1,15 @@
 // PONG, in the order you type it. ten steps, and after every one there is
 // something NEW on the screen -- so whenever the clock stops, you have a demo.
 //
-// two rules and that is the whole layout:
-//   1. the last line of the file is the call that starts things. you always add
-//      new code ABOVE it. it changes exactly once: draw() at step 1 becomes
-//      requestAnimationFrame(loop) at step 4.
-//   2. draw(), update() and bounceOffPaddle() are the three functions that GROW
-//      rather than being written once. their lines are grouped and labelled with
-//      the step they arrive in. type only the groups you have reached.
+// type it straight down. nothing has to be moved later and there is no jumping
+// to the bottom of the file: the statement that wires a step up sits inside that
+// step, right under the thing it wires. the render loop is the FIRST thing you
+// write, at step 1, so the line that starts everything is written once, early,
+// and never touched again.
+//
+// four functions GROW instead of being written once -- draw, loop, update and
+// bounceOffPaddle. their lines are grouped, and each group carries the step it
+// arrives in. type only the groups you have reached.
 //
 // everything else is written once, in the step that first needs it, and never
 // touched again. nothing is here before the step that uses it -- step 1 needs
@@ -17,7 +19,8 @@
 // for the bounce, and learnopengl's breakout "collision detection" for the box.
 
 // ===========================================================================
-// STEP 1. A BLACK CANVAS. seven lines, and there is something to point at.
+// STEP 1. A BLACK CANVAS. eleven lines, and there is something to point at.
+// the loop goes in now, so nothing later has to reach back and start it.
 // ===========================================================================
 
 // the one <canvas> on the page
@@ -46,6 +49,25 @@ function draw() {
     ctx.fillText("Click in the window to start", 20, canvas.height - 20);
   }
 }
+
+// GROWS. at step 1 it is only the last two lines, and loop takes no argument.
+// step 4 adds the clock above them, and the now that the clock reads.
+function loop(now: number) {
+  // step 4 -- the frame clock, and the one call that moves anything
+  if (lastTime === 0) lastTime = now; // start the clock on frame 1, not on load
+  const sinceLastFrame = (now - lastTime) / 1000; // rAF hands over milliseconds
+  const elapsed = Math.min(sinceLastFrame, MAX_FRAME_SECONDS); // apply the cap
+  lastTime = now; // remember the real timestamp, not the capped gap
+  update(elapsed); // move and collide...
+
+  // step 1
+  draw(); // ...then show the result
+  requestAnimationFrame(loop); // and book the next frame
+}
+
+// the line that starts everything. written once, here, and never touched again
+// -- every step below just adds to what draw() and loop() already run.
+requestAnimationFrame(loop);
 
 // ===========================================================================
 // STEP 2. THE BALL. the first box, so this is where boxes get a type.
@@ -125,8 +147,8 @@ const PADDLE_HALF_EXTENTS: HalfExtents = vector(6, 45); // so 12 wide, 90 tall
 let paddle = aabb(point(PADDLE_CENTER_X, COURT.center.y), PADDLE_HALF_EXTENTS);
 
 // ===========================================================================
-// STEP 4. IT MOVES, AND LEAVES OFF THE FIRST WALL. swap the last line of the
-// file from draw() to requestAnimationFrame(loop) and the ball sails away.
+// STEP 4. IT MOVES, AND LEAVES OFF THE FIRST WALL. the loop is already
+// running; this gives it a clock and something to move.
 // ===========================================================================
 
 type Velocity = Vector; // pixels per SECOND, never per frame
@@ -186,18 +208,6 @@ function update(elapsed: number) {
     score = 0; // step 9 -- a miss costs the whole streak
     resetBall(); // and serves again from the right
   }
-}
-
-function loop(now: number) {
-  if (lastTime === 0) lastTime = now; // start the clock on frame 1, not on load
-
-  const sinceLastFrame = (now - lastTime) / 1000; // rAF hands over milliseconds
-  const elapsed = Math.min(sinceLastFrame, MAX_FRAME_SECONDS); // apply the cap
-  lastTime = now; // remember the real timestamp, not the capped gap
-
-  update(elapsed); // move and collide...
-  draw(); // ...then show the result
-  requestAnimationFrame(loop); // and book the next frame
 }
 
 // ===========================================================================
@@ -301,7 +311,7 @@ function bounceOffWall(normal: Direction) {
 // and put the y back at step 7, once you can steer.
 // ===========================================================================
 
-// GROWS. the last group arrives at step 9.
+// GROWS. the last two groups arrive at steps 9 and 10.
 function bounceOffPaddle() {
   // two AABBs collide when the gap between their centers is shorter than their
   // combined reach, on BOTH axes. what is left over on each axis is how deep
@@ -336,14 +346,16 @@ function bounceOffPaddle() {
   ball = movedAABBBy(ball, backOutOfThePaddle); // clear of the paddle first...
   ballVelocity = reflect(ballVelocity, normal); // ...then bounce
 
+  beep(); // step 10 -- and say so out loud
+
   // step 9 -- only a RETURN scores. clipping the top edge leaves it going left.
   const headedBackUpCourt = dotProduct(ballVelocity, RIGHT) > 0;
   if (headedBackUpCourt) score++;
 }
 
 // ===========================================================================
-// STEP 7. THE PADDLE FOLLOWS THE MOUSE. add the listener to the bottom of the
-// file, and the two clamp lines to the top of update().
+// STEP 7. THE PADDLE FOLLOWS THE MOUSE. also add the two clamp lines to the
+// top of update(), so an off-court mouse cannot drag the paddle out of play.
 // ===========================================================================
 
 const PADDLE_CENTER_LIMIT = courtShrunkBy(PADDLE_HALF_EXTENTS); // mouse capped here
@@ -394,6 +406,10 @@ function onMouseMove(event: MouseEvent) {
   paddle = movedAABBTo(paddle, point(PADDLE_CENTER_X, mouseY));
 }
 
+// listen on WINDOW, not the canvas -- on the canvas the paddle freezes the
+// moment the pointer leaves it.
+window.addEventListener("mousemove", onMouseMove);
+
 // ===========================================================================
 // STEP 8. A MISS SERVES AGAIN. the ball stops vanishing for good.
 // ===========================================================================
@@ -415,6 +431,10 @@ function resetBall() {
   ballVelocity = vector(-BALL_SPEED.x, BALL_SPEED.y); // leftward, at the player
 }
 
+// serve once at load. the loop was booked back at step 1, but its first frame
+// only arrives after this whole file has run, so the ball is already placed.
+resetBall();
+
 // ===========================================================================
 // STEP 9. THE SCORE. one variable, one line in draw(), one line in
 // bounceOffPaddle(), one line in update() -- all four already marked above.
@@ -423,25 +443,37 @@ function resetBall() {
 let score = 0; // returns in a row; one miss puts it back to zero
 
 // ===========================================================================
-// STEP 10. CLICK TO START, AND THE HINT.
+// STEP 10. CLICK TO START, THE HINT, AND THE BEEP.
 // ===========================================================================
 
 let running = false; // the ball waits until the player clicks
+let audio: AudioContext | null = null; // null right up until that first click
 
 function onClick() {
+  if (!audio) audio = new AudioContext(); // build it once, never again
   running = true; // from here on, update() moves the ball
 }
 
-// ===========================================================================
-// GO. always the last thing in the file -- you add new code ABOVE it.
-// at step 1 this is the single line draw(). at step 4 that one line becomes
-// requestAnimationFrame(loop). the other three join at the steps marked.
-// ===========================================================================
+function beep() {
+  if (!audio) return; // no click yet
 
-// listen on WINDOW, not the canvas -- on the canvas the paddle freezes the
-// moment the pointer leaves it.
-window.addEventListener("mousemove", onMouseMove); // step 7
-window.addEventListener("click", onClick); // step 10 -- starts the ball
+  const now = audio.currentTime; // the AUDIO clock, not the animation one
+  const tone = audio.createOscillator(); // the sound itself; a sine by default
+  const volume = audio.createGain(); // a knob in front of it, to fade it out
 
-resetBall(); // step 8 -- serve before the very first draw
-requestAnimationFrame(loop); // step 4 -- was draw() at step 1
+  tone.frequency.value = 440; // concert A
+
+  // fade out, or you hear a click instead of a beep
+  volume.gain.setValueAtTime(0.15, now); // start quiet-ish, not at full blast
+  volume.gain.exponentialRampToValueAtTime(0.001, now + 0.08); // never toward 0
+
+  tone.connect(volume); // tone -> volume -> speakers
+  volume.connect(audio.destination);
+
+  tone.start(now); // scheduled on the same clock, so the fade lines up exactly
+  tone.stop(now + 0.08); // one-shot: a stopped oscillator can never restart
+}
+
+// no audio before a real interaction, and mousemove does not count -- so the
+// click that starts play is also the click that builds the AudioContext.
+window.addEventListener("click", onClick);
