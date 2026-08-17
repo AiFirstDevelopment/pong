@@ -253,31 +253,20 @@ window.addEventListener("mousemove", onMouseMove);
 let score = 0; // returns in a row; one miss puts it back to zero
 
 let running = false; // the ball waits until the player clicks
-let audio: AudioContext | null = null; // null right up until that first click
+let audio: AudioContext; // the first click builds it; beep() cannot run before
 
 function onClick() {
-  if (!audio) audio = new AudioContext(); // build it once, never again
+  audio ??= new AudioContext(); // build it once, never again
   running = true; // from here on, update() moves the ball
 }
 
+// four statements: make it, connect it, start it, stop it. 440 Hz sine is the
+// default, so there is nothing to set. no gain node in front of it, which is
+// what makes it two lines -- and also full volume, and a tick at the cut-off
+// where a fade would have been.
 function beep() {
-  if (!audio) return; // no click yet
-
-  const now = audio.currentTime; // the AUDIO clock, not the animation one
-  const tone = audio.createOscillator(); // the sound itself; a sine by default
-  const volume = audio.createGain(); // a knob in front of it, to fade it out
-
-  tone.frequency.value = 440; // concert A
-
-  // fade out, or you hear a click instead of a beep
-  volume.gain.setValueAtTime(0.15, now); // start quiet-ish, not at full blast
-  volume.gain.exponentialRampToValueAtTime(0.001, now + 0.08); // never toward 0
-
-  tone.connect(volume); // tone -> volume -> speakers
-  volume.connect(audio.destination);
-
-  tone.start(now); // scheduled on the same clock, so the fade lines up exactly
-  tone.stop(now + 0.08); // one-shot: a stopped oscillator can never restart
+  const tone = audio.createOscillator(); tone.connect(audio.destination);
+  tone.start(); tone.stop(audio.currentTime + 0.06);
 }
 
 // no audio before a real interaction, and mousemove does not count -- so the
